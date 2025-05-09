@@ -1,88 +1,105 @@
 document.addEventListener('DOMContentLoaded', () => {
   // Get DOM elements
-  const currentRiskElement = document.getElementById('current-risk');
+  const statusElement = document.getElementById('status');
+  const statusText = statusElement.querySelector('.status-text');
+  const statusIcon = statusElement.querySelector('.status-icon');
   const threatsBlockedElement = document.getElementById('threats-blocked');
   const lastScanElement = document.getElementById('last-scan');
-  const scanNowButton = document.getElementById('scan-now');
   const urlTableBody = document.getElementById('url-table-body');
   const emailTableBody = document.getElementById('email-table-body');
+  const scanNowButton = document.getElementById('scan-now');
+  const viewReportButton = document.getElementById('view-report');
+  const scanningToggle = document.getElementById('scanning-toggle');
+  const scanningStatus = document.getElementById('scanning-status');
 
-  // Initialize elements with default values
-  if (currentRiskElement) currentRiskElement.textContent = 'Scanning...';
-  if (threatsBlockedElement) threatsBlockedElement.textContent = '0';
-  if (lastScanElement) lastScanElement.textContent = 'Never';
+  // Load initial state
+  chrome.storage.local.get([
+    'threatsBlocked',
+    'lastScan',
+    'scannedUrls',
+    'currentRiskScore',
+    'isScanningEnabled'
+  ], (result) => {
+    // Update scanning toggle state
+    if (result.isScanningEnabled !== undefined) {
+      scanningToggle.checked = result.isScanningEnabled;
+      updateScanningStatus(result.isScanningEnabled);
+    }
 
-  // Load stats from storage
-  chrome.storage.local.get(['threatsBlocked', 'lastScan', 'scannedUrls', 'scannedEmails'], (result) => {
-    if (result.threatsBlocked && threatsBlockedElement) {
+    // Update stats
+    if (result.threatsBlocked) {
       threatsBlockedElement.textContent = result.threatsBlocked;
     }
-    if (result.lastScan && lastScanElement) {
+
+    if (result.lastScan) {
       lastScanElement.textContent = new Date(result.lastScan).toLocaleString();
     }
+
+    // Update risk display
+    if (result.currentRiskScore !== undefined) {
+      updateRiskDisplay(result.currentRiskScore);
+    }
+
+    // Update URL table
     if (result.scannedUrls) {
       updateUrlTable(result.scannedUrls);
     }
-    if (result.scannedEmails) {
-      updateEmailTable(result.scannedEmails);
-    }
-  });
 
-  // Get current tab's security status
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (!tabs || !tabs[0]) return;
-    
-    const currentTab = tabs[0];
-    chrome.tabs.sendMessage(currentTab.id, { type: 'GET_SECURITY_STATUS' }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.log('Error getting security status:', chrome.runtime.lastError);
-        if (currentRiskElement) currentRiskElement.textContent = 'Error';
-        return;
-      }
-      
-      if (response && response.riskScore !== null && currentRiskElement) {
-        updateRiskDisplay(response.riskScore);
+    // Load stats from storage
+    chrome.storage.local.get(['scannedEmails'], (result) => {
+      if (result.scannedEmails) {
+        updateEmailTable(result.scannedEmails);
       }
     });
   });
 
-  // Handle scan now button click
-  if (scanNowButton) {
-    scanNowButton.addEventListener('click', () => {
+  // Handle scanning toggle
+  scanningToggle.addEventListener('change', (e) => {
+    const isEnabled = e.target.checked;
+    chrome.storage.local.set({ isScanningEnabled: isEnabled }, () => {
+      updateScanningStatus(isEnabled);
+      // Notify content script about the change
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs || !tabs[0]) return;
-        
-        const currentTab = tabs[0];
-        chrome.tabs.sendMessage(currentTab.id, { type: 'SCAN_URL', url: currentTab.url }, (response) => {
-          if (chrome.runtime.lastError) {
-            console.log('Error scanning URL:', chrome.runtime.lastError);
-            return;
-          }
-        });
+        if (tabs[0]) {
+          chrome.tabs.sendMessage(tabs[0].id, {
+            type: 'TOGGLE_SCANNING',
+            isEnabled
+          });
+        }
       });
     });
+  });
+
+  function updateScanningStatus(isEnabled) {
+    scanningStatus.textContent = isEnabled ? 'Scanning is enabled' : 'Scanning is disabled';
+    scanningStatus.style.color = isEnabled ? '#4CAF50' : '#F44336';
+    scanNowButton.disabled = !isEnabled;
+    scanNowButton.style.opacity = isEnabled ? '1' : '0.5';
   }
 
   // Update risk display
   function updateRiskDisplay(riskScore) {
-    if (!currentRiskElement) return;
-    
-    let riskText;
-    let riskColor;
+    let statusClass;
+    let statusText;
+    let statusIcon;
 
     if (riskScore <= 30) {
-      riskText = 'Safe';
-      riskColor = '#4CAF50';
+      statusClass = 'safe';
+      statusText = 'Safe';
+      statusIcon = '✓';
     } else if (riskScore <= 70) {
-      riskText = 'Caution';
-      riskColor = '#FFC107';
+      statusClass = 'caution';
+      statusText = 'Caution';
+      statusIcon = '⚠️';
     } else {
-      riskText = 'Danger';
-      riskColor = '#F44336';
+      statusClass = 'danger';
+      statusText = 'Danger';
+      statusIcon = '⚠️';
     }
 
-    currentRiskElement.textContent = `${riskText} (${riskScore}/100)`;
-    currentRiskElement.style.color = riskColor;
+    statusElement.className = `status ${statusClass}`;
+    statusElement.querySelector('.status-text').textContent = `${statusText} (${riskScore}/100)`;
+    statusElement.querySelector('.status-icon').textContent = statusIcon;
   }
 
   // Update URL table
@@ -95,7 +112,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!scannedUrls || Object.keys(scannedUrls).length === 0) {
       urlTableBody.innerHTML = `
         <tr>
-          <td colspan="3" class="no-urls">No URLs scanned yet</td>
+          <td colspan="3" style="text-align: center; color: #666;">No URLs scanned yet</td>
         </tr>
       `;
       return;
@@ -208,39 +225,40 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Handle scan now button click
+  scanNowButton.addEventListener('click', () => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: 'SCAN_CURRENT_PAGE' });
+      }
+    });
+  });
+
+  // Handle view report button click
+  viewReportButton.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'SHOW_SECURITY_REPORT' });
+  });
+
   // Listen for security status updates
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'SECURITY_STATUS_UPDATE') {
-      updateRiskDisplay(message.data.riskScore);
+      const { riskScore, threatsBlocked, lastScan, scannedUrls } = message.data;
       
-      // Update last scan time
-      if (lastScanElement) {
-        lastScanElement.textContent = new Date().toLocaleString();
+      if (riskScore !== undefined) {
+        updateRiskDisplay(riskScore);
       }
-      chrome.storage.local.set({ lastScan: new Date().toISOString() });
-
-      // Update threats blocked if a threat was detected
-      if (message.data.riskScore > 70 && threatsBlockedElement) {
-        chrome.storage.local.get(['threatsBlocked'], (result) => {
-          const newCount = (result.threatsBlocked || 0) + 1;
-          threatsBlockedElement.textContent = newCount;
-          chrome.storage.local.set({ threatsBlocked: newCount });
-        });
+      
+      if (threatsBlocked !== undefined) {
+        threatsBlockedElement.textContent = threatsBlocked;
       }
-
-      // Update URL table
-      chrome.storage.local.get(['scannedUrls'], (result) => {
-        if (result.scannedUrls) {
-          updateUrlTable(result.scannedUrls);
-        }
-      });
-
-      // Update email table
-      chrome.storage.local.get(['scannedEmails'], (result) => {
-        if (result.scannedEmails) {
-          updateEmailTable(result.scannedEmails);
-        }
-      });
+      
+      if (lastScan) {
+        lastScanElement.textContent = new Date(lastScan).toLocaleString();
+      }
+      
+      if (scannedUrls) {
+        updateUrlTable(scannedUrls);
+      }
     }
   });
 });

@@ -17,6 +17,17 @@ let securityState = {
 const scannedUrls = new Map();
 // Store scanned emails and their results
 const scannedEmails = new Map();
+let isScanningEnabled = true;
+
+// Load initial state
+chrome.storage.local.get(['isScanningEnabled'], (result) => {
+  if (result.isScanningEnabled !== undefined) {
+    isScanningEnabled = result.isScanningEnabled;
+    if (!isScanningEnabled) {
+      removeAllSecurityElements();
+    }
+  }
+});
 
 // Function to check if extension context is valid
 function isExtensionContextValid() {
@@ -40,6 +51,56 @@ function handleExtensionContextInvalid() {
   if (root) {
     root.render(<SecurityBadge error="Extension disconnected. Please refresh the page." />);
   }
+}
+
+// Function to remove all security-related elements
+function removeAllSecurityElements() {
+  // Remove main security badge
+  const mainBadge = document.getElementById('security-badge');
+  if (mainBadge) {
+    mainBadge.remove();
+  }
+
+  // Remove React badge container
+  const badgeContainer = document.getElementById('securiguard-badge-container');
+  if (badgeContainer) {
+    badgeContainer.remove();
+  }
+
+  // Remove all link badges
+  const linkBadges = document.querySelectorAll('.securiguard-link-badge');
+  linkBadges.forEach(badge => badge.remove());
+
+  // Remove email badges
+  const emailBadges = document.querySelectorAll('.securiguard-email-badge');
+  emailBadges.forEach(badge => badge.remove());
+
+  // Remove all tooltips
+  const tooltips = document.querySelectorAll('.securiguard-tooltip, .securiguard-email-tooltip');
+  tooltips.forEach(tooltip => tooltip.remove());
+
+  // Restore all links to their original state
+  const links = document.getElementsByTagName('a');
+  Array.from(links).forEach(link => {
+    link.style.pointerEvents = '';
+    link.style.opacity = '';
+    link.style.textDecoration = '';
+  });
+}
+
+// Function to restore scanning
+function restoreScanning() {
+  // Recreate React badge container
+  const badgeContainer = document.createElement('div');
+  badgeContainer.id = 'securiguard-badge-container';
+  document.body.appendChild(badgeContainer);
+
+  // Reinitialize React root
+  const root = createRoot(badgeContainer);
+  root.render(<SecurityBadge riskScore={null} />);
+
+  // Rescan current page
+  scanCurrentPage();
 }
 
 // Create container for security badge
@@ -312,6 +373,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ success: false, error: error.message || error });
     }
     return true; // Required for async sendResponse
+  } else if (message.type === 'TOGGLE_SCANNING') {
+    isScanningEnabled = message.isEnabled;
+    if (isScanningEnabled) {
+      restoreScanning();
+    } else {
+      removeAllSecurityElements();
+    }
+  } else if (message.type === 'SCAN_CURRENT_PAGE' && isScanningEnabled) {
+    scanCurrentPage();
   }
 });
 
@@ -536,4 +606,96 @@ if (isGmailPage()) {
 
   // Initial check
   checkEmail();
+}
+
+// Function to scan current page
+async function scanCurrentPage() {
+  if (!isScanningEnabled) return;
+
+  try {
+    const url = window.location.href;
+    const analysis = await analyzeUrl(url);
+    const threatIntel = await checkThreatIntelligence(url);
+    
+    // Calculate final risk score
+    const riskScore = calculateRiskScore(analysis, threatIntel);
+    currentRiskScore = riskScore;
+    
+    // Store scanned URL
+    scannedUrls.set(url, {
+      riskScore,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Save to storage
+    chrome.storage.local.set({ scannedUrls });
+    
+    // Update security badge
+    updateSecurityBadge(riskScore);
+    
+    // Notify popup
+    chrome.runtime.sendMessage({
+      type: 'SECURITY_STATUS_UPDATE',
+      data: {
+        riskScore,
+        scannedUrls
+      }
+    });
+  } catch (error) {
+    console.error('Error scanning page:', error);
+    updateSecurityBadge(null, error);
+  }
+}
+
+// Function to update security badge
+function updateSecurityBadge(riskScore, error = null) {
+  if (!isScanningEnabled) return;
+
+  let existingBadge = document.getElementById('security-badge');
+  if (!existingBadge) {
+    existingBadge = document.createElement('div');
+    existingBadge.id = 'security-badge';
+    document.body.appendChild(existingBadge);
+  }
+
+  // Update badge content
+  existingBadge.className = 'security-badge';
+  if (error) {
+    existingBadge.classList.add('error');
+    existingBadge.innerHTML = `
+      <span class="security-badge-icon">⚠️</span>
+      <span class="security-badge-text">Error</span>
+    `;
+  } else if (riskScore === null) {
+    existingBadge.classList.add('scanning');
+    existingBadge.innerHTML = `
+      <span class="security-badge-icon">🔄</span>
+      <span class="security-badge-text">Scanning...</span>
+    `;
+  } else {
+    if (riskScore <= 30) {
+      existingBadge.classList.add('safe');
+      existingBadge.innerHTML = `
+        <span class="security-badge-icon">✓</span>
+        <span class="security-badge-text">Safe</span>
+      `;
+    } else if (riskScore <= 70) {
+      existingBadge.classList.add('caution');
+      existingBadge.innerHTML = `
+        <span class="security-badge-icon">⚠️</span>
+        <span class="security-badge-text">Caution</span>
+      `;
+    } else {
+      existingBadge.classList.add('danger');
+      existingBadge.innerHTML = `
+        <span class="security-badge-icon">⚠️</span>
+        <span class="security-badge-text">Danger</span>
+      `;
+    }
+  }
+}
+
+// Initialize scanning
+if (isScanningEnabled) {
+  scanCurrentPage();
 } 

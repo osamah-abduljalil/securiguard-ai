@@ -7,6 +7,7 @@ const SecurityBadge = ({ riskScore, error }) => {
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [isVisible, setIsVisible] = useState(true);
   const badgeRef = useRef(null);
+  const animationFrameRef = useRef(null);
 
   // Load saved position from storage
   useEffect(() => {
@@ -24,6 +25,15 @@ const SecurityBadge = ({ riskScore, error }) => {
     }
   }, [position, isDragging]);
 
+  // Cleanup animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, []);
+
   const handleMouseDown = (e) => {
     if (e.target.classList.contains('close-badge')) return;
     
@@ -33,26 +43,46 @@ const SecurityBadge = ({ riskScore, error }) => {
       x: e.clientX - rect.left,
       y: e.clientY - rect.top
     });
+
+    // Add global mouse event listeners
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
   };
 
   const handleMouseMove = (e) => {
     if (!isDragging) return;
 
-    const newX = e.clientX - dragOffset.x;
-    const newY = e.clientY - dragOffset.y;
+    // Use requestAnimationFrame for smooth animation
+    animationFrameRef.current = requestAnimationFrame(() => {
+      const newX = e.clientX - dragOffset.x;
+      const newY = e.clientY - dragOffset.y;
 
-    // Keep badge within viewport bounds
-    const maxX = window.innerWidth - badgeRef.current.offsetWidth;
-    const maxY = window.innerHeight - badgeRef.current.offsetHeight;
+      // Get viewport dimensions
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const badgeWidth = badgeRef.current.offsetWidth;
+      const badgeHeight = badgeRef.current.offsetHeight;
 
-    setPosition({
-      x: Math.max(0, Math.min(newX, maxX)),
-      y: Math.max(0, Math.min(newY, maxY))
+      // Calculate bounds
+      const maxX = viewportWidth - badgeWidth;
+      const maxY = viewportHeight - badgeHeight;
+
+      // Update position with bounds checking
+      setPosition({
+        x: Math.max(0, Math.min(newX, maxX)),
+        y: Math.max(0, Math.min(newY, maxY))
+      });
     });
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    // Remove global mouse event listeners
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', handleMouseUp);
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
   };
 
   const handleClick = () => {
@@ -102,12 +132,11 @@ const SecurityBadge = ({ riskScore, error }) => {
         left: `${position.x}px`,
         top: `${position.y}px`,
         cursor: isDragging ? 'grabbing' : 'grab',
-        zIndex: 10000
+        zIndex: 10000,
+        transform: isDragging ? 'scale(1.05)' : 'scale(1)',
+        transition: isDragging ? 'none' : 'transform 0.2s ease'
       }}
       onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
       onClick={handleClick}
     >
       <button className="close-badge" onClick={handleClose}>×</button>
