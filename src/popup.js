@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'threatsBlocked',
     'lastScan',
     'scannedUrls',
+    'scannedEmails',
     'currentRiskScore',
     'isScanningEnabled'
   ], (result) => {
@@ -45,12 +46,10 @@ document.addEventListener('DOMContentLoaded', () => {
       updateUrlTable(result.scannedUrls);
     }
 
-    // Load stats from storage
-    chrome.storage.local.get(['scannedEmails'], (result) => {
-      if (result.scannedEmails) {
-        updateEmailTable(result.scannedEmails);
-      }
-    });
+    // Update email table
+    if (result.scannedEmails) {
+      updateEmailTable(result.scannedEmails);
+    }
   });
 
   // Handle scanning toggle
@@ -86,20 +85,20 @@ document.addEventListener('DOMContentLoaded', () => {
     if (riskScore <= 30) {
       statusClass = 'safe';
       statusText = 'Safe';
-      statusIcon = '✓';
+      statusIcon = '<i class="fas fa-check-circle"></i>';
     } else if (riskScore <= 70) {
       statusClass = 'caution';
       statusText = 'Caution';
-      statusIcon = '⚠️';
+      statusIcon = '<i class="fas fa-exclamation-triangle"></i>';
     } else {
       statusClass = 'danger';
       statusText = 'Danger';
-      statusIcon = '⚠️';
+      statusIcon = '<i class="fas fa-exclamation-circle"></i>';
     }
 
     statusElement.className = `status ${statusClass}`;
     statusElement.querySelector('.status-text').textContent = `${statusText} (${riskScore}/100)`;
-    statusElement.querySelector('.status-icon').textContent = statusIcon;
+    statusElement.querySelector('.status-icon').innerHTML = statusIcon;
   }
 
   // Update URL table
@@ -170,7 +169,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!scannedEmails || Object.keys(scannedEmails).length === 0) {
       emailTableBody.innerHTML = `
         <tr>
-          <td colspan="4" class="no-emails">No emails scanned yet</td>
+          <td colspan="4" style="text-align: center; color: #666;">No emails scanned yet</td>
         </tr>
       `;
       return;
@@ -242,7 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Listen for security status updates
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'SECURITY_STATUS_UPDATE') {
-      const { riskScore, threatsBlocked, lastScan, scannedUrls } = message.data;
+      const { riskScore, threatsBlocked, lastScan, scannedUrls, scannedEmails } = message.data;
       
       if (riskScore !== undefined) {
         updateRiskDisplay(riskScore);
@@ -258,6 +257,10 @@ document.addEventListener('DOMContentLoaded', () => {
       
       if (scannedUrls) {
         updateUrlTable(scannedUrls);
+      }
+
+      if (scannedEmails) {
+        updateEmailTable(scannedEmails);
       }
     }
   });

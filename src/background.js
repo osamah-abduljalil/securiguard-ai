@@ -270,7 +270,7 @@ async function analyzeEmail(emailData) {
   }
 }
 
-// Listen for messages from content script
+// Handle messages from popup and content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SCAN_URL') {
     analyzeUrl(message.url)
@@ -293,11 +293,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true; // Keep the message channel open for async response
   } else if (message.type === 'SHOW_SECURITY_REPORT') {
+    // Create a new window for the report
     chrome.windows.create({
       url: chrome.runtime.getURL('report.html'),
       type: 'popup',
       width: 800,
       height: 600
+    }, (window) => {
+      sendResponse({ success: true, windowId: window.id });
     });
   }
 });

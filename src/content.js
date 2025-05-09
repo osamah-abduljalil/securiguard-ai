@@ -7,6 +7,8 @@ import './content.css';
 
 // Initialize state
 let currentUrl = window.location.href;
+let currentRiskScore = null;
+let lastScan = null;
 let securityState = {
   riskScore: null,
   analysis: null,
@@ -20,12 +22,20 @@ const scannedEmails = new Map();
 let isScanningEnabled = true;
 
 // Load initial state
-chrome.storage.local.get(['isScanningEnabled'], (result) => {
+chrome.storage.local.get(['isScanningEnabled', 'currentRiskScore', 'lastScan'], (result) => {
   if (result.isScanningEnabled !== undefined) {
     isScanningEnabled = result.isScanningEnabled;
     if (!isScanningEnabled) {
       removeAllSecurityElements();
     }
+  }
+  
+  if (result.currentRiskScore !== undefined) {
+    currentRiskScore = result.currentRiskScore;
+  }
+
+  if (result.lastScan) {
+    lastScan = result.lastScan;
   }
 });
 
@@ -380,8 +390,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else {
       removeAllSecurityElements();
     }
-  } else if (message.type === 'SCAN_CURRENT_PAGE' && isScanningEnabled) {
-    scanCurrentPage();
+    sendResponse({ success: true });
+  } else if (message.type === 'SCAN_CURRENT_PAGE') {
+    if (isScanningEnabled) {
+      // Clear existing scan results
+      scannedUrls.clear();
+      currentRiskScore = null;
+      
+      // Force rescan
+      scanCurrentPage().then(() => {
+        sendResponse({ success: true });
+      }).catch((error) => {
+        console.error('Error during scan:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    } else {
+      sendResponse({ success: false, error: 'Scanning is disabled' });
+    }
+    return true; // Required for async sendResponse
   }
 });
 
@@ -608,27 +634,107 @@ if (isGmailPage()) {
   checkEmail();
 }
 
+// Function to analyze URL
+async function analyzeUrl(url) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'SCAN_URL',
+      url: url
+    });
+
+    if (response && response.success) {
+      return response.data;
+    }
+    throw new Error('Failed to analyze URL');
+  } catch (error) {
+    console.error('Error analyzing URL:', error);
+    throw error;
+  }
+}
+
+// Function to check threat intelligence
+async function checkThreatIntelligence(url) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'CHECK_THREAT_INTELLIGENCE',
+      url: url
+    });
+
+    if (response && response.success) {
+      return response.data;
+    }
+    return null;
+  } catch (error) {
+    console.error('Error checking threat intelligence:', error);
+    return null;
+  }
+}
+
+// Function to calculate risk score
+function calculateRiskScore(analysis, threatIntel) {
+  let riskScore = 0;
+
+  // Base score from URL analysis
+  if (analysis && analysis.riskScore) {
+    riskScore += analysis.riskScore;
+  }
+
+  // Additional score from threat intelligence
+  if (threatIntel) {
+    if (threatIntel.isMalicious) {
+      riskScore += 50;
+    }
+    if (threatIntel.reputationScore) {
+      riskScore += (100 - threatIntel.reputationScore) / 2;
+    }
+  }
+
+  // Cap the risk score at 100
+  return Math.min(100, Math.max(0, riskScore));
+}
+
 // Function to scan current page
 async function scanCurrentPage() {
-  if (!isScanningEnabled) return;
+  if (!isScanningEnabled) {
+    throw new Error('Scanning is disabled');
+  }
 
   try {
     const url = window.location.href;
-    const analysis = await analyzeUrl(url);
-    const threatIntel = await checkThreatIntelligence(url);
+    
+    // Update badge to scanning state
+    updateSecurityBadge(null);
+
+    // Clear existing scan results for this URL
+    scannedUrls.delete(url);
+    
+    // Analyze URL and check threat intelligence
+    const [analysis, threatIntel] = await Promise.all([
+      analyzeUrl(url),
+      checkThreatIntelligence(url)
+    ]);
     
     // Calculate final risk score
     const riskScore = calculateRiskScore(analysis, threatIntel);
     currentRiskScore = riskScore;
     
+    // Update last scan timestamp
+    lastScan = new Date().toISOString();
+    
     // Store scanned URL
     scannedUrls.set(url, {
       riskScore,
-      timestamp: new Date().toISOString()
+      timestamp: lastScan,
+      analysis,
+      threatIntel
     });
     
     // Save to storage
-    chrome.storage.local.set({ scannedUrls });
+    await chrome.storage.local.set({ 
+      scannedUrls: Object.fromEntries(scannedUrls),
+      currentRiskScore: riskScore,
+      lastScan: lastScan
+    });
     
     // Update security badge
     updateSecurityBadge(riskScore);
@@ -638,13 +744,43 @@ async function scanCurrentPage() {
       type: 'SECURITY_STATUS_UPDATE',
       data: {
         riskScore,
-        scannedUrls
+        scannedUrls: Object.fromEntries(scannedUrls),
+        currentRiskScore: riskScore,
+        lastScan: lastScan
       }
     });
+
+    return { success: true, riskScore };
   } catch (error) {
     console.error('Error scanning page:', error);
     updateSecurityBadge(null, error);
+    throw error;
   }
+}
+
+// Update risk display
+function updateRiskDisplay(riskScore) {
+  let statusClass;
+  let statusText;
+  let statusIcon;
+
+  if (riskScore <= 30) {
+    statusClass = 'safe';
+    statusText = 'Safe';
+    statusIcon = '✓'; // Unicode checkmark
+  } else if (riskScore <= 70) {
+    statusClass = 'caution';
+    statusText = 'Caution';
+    statusIcon = '⚠️'; // Warning emoji
+  } else {
+    statusClass = 'danger';
+    statusText = 'Danger';
+    statusIcon = '⚠️'; // Warning emoji
+  }
+
+  statusElement.className = `status ${statusClass}`;
+  statusElement.querySelector('.status-text').textContent = `${statusText} (${riskScore}/100)`;
+  statusElement.querySelector('.status-icon').textContent = statusIcon;
 }
 
 // Function to update security badge
@@ -663,32 +799,32 @@ function updateSecurityBadge(riskScore, error = null) {
   if (error) {
     existingBadge.classList.add('error');
     existingBadge.innerHTML = `
-      <span class="security-badge-icon">⚠️</span>
+      <span class="security-badge-icon"><i class="fas fa-exclamation-circle"></i></span>
       <span class="security-badge-text">Error</span>
     `;
   } else if (riskScore === null) {
     existingBadge.classList.add('scanning');
     existingBadge.innerHTML = `
-      <span class="security-badge-icon">🔄</span>
+      <span class="security-badge-icon"><i class="fas fa-sync fa-spin"></i></span>
       <span class="security-badge-text">Scanning...</span>
     `;
   } else {
     if (riskScore <= 30) {
       existingBadge.classList.add('safe');
       existingBadge.innerHTML = `
-        <span class="security-badge-icon">✓</span>
+        <span class="security-badge-icon"><i class="fas fa-check-circle"></i></span>
         <span class="security-badge-text">Safe</span>
       `;
     } else if (riskScore <= 70) {
       existingBadge.classList.add('caution');
       existingBadge.innerHTML = `
-        <span class="security-badge-icon">⚠️</span>
+        <span class="security-badge-icon"><i class="fas fa-exclamation-triangle"></i></span>
         <span class="security-badge-text">Caution</span>
       `;
     } else {
       existingBadge.classList.add('danger');
       existingBadge.innerHTML = `
-        <span class="security-badge-icon">⚠️</span>
+        <span class="security-badge-icon"><i class="fas fa-exclamation-circle"></i></span>
         <span class="security-badge-text">Danger</span>
       `;
     }

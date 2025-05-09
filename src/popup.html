@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>SecuriGuard AI</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
     body {
       width: 400px;
@@ -39,6 +40,8 @@
     .status-icon {
       font-size: 24px;
       margin-right: 12px;
+      width: 24px;
+      text-align: center;
     }
 
     .status-text {
@@ -97,6 +100,15 @@
       color: #333;
     }
 
+    /* Add styles for last-scan specifically */
+    #last-scan {
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+
     .actions {
       display: flex;
       gap: 12px;
@@ -147,6 +159,31 @@
       margin-bottom: 20px;
       border: 1px solid #eee;
       border-radius: 8px;
+    }
+
+    .email-table-container {
+      max-height: 300px;
+      overflow-y: auto;
+      margin-bottom: 20px;
+      border: 1px solid #eee;
+      border-radius: 8px;
+    }
+
+    .email-table-container h3 {
+      margin: 0;
+      padding: 12px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #eee;
+      font-size: 16px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .email-cell {
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .url-table {
@@ -321,6 +358,25 @@
       <tbody id="url-table-body">
         <tr>
           <td colspan="3" style="text-align: center; color: #666;">No URLs scanned yet</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="email-table-container">
+    <h3>Scanned Emails</h3>
+    <table class="url-table">
+      <thead>
+        <tr>
+          <th>Subject</th>
+          <th>Sender</th>
+          <th>Risk Score</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="email-table-body">
+        <tr>
+          <td colspan="4" style="text-align: center; color: #666;">No emails scanned yet</td>
         </tr>
       </tbody>
     </table>
