@@ -15,6 +15,8 @@ let securityState = {
 
 // Store scanned URLs and their results
 const scannedUrls = new Map();
+// Store scanned emails and their results
+const scannedEmails = new Map();
 
 // Function to check if extension context is valid
 function isExtensionContextValid() {
@@ -347,4 +349,191 @@ function handleScanError(error) {
   const errorMessage = error?.message || error?.toString() || 'Unknown error occurred';
   // Show error in badge
   root.render(<SecurityBadge error={errorMessage} />);
+}
+
+// Function to check if current page is Gmail
+function isGmailPage() {
+  return window.location.hostname === 'mail.google.com';
+}
+
+// Function to get current email content
+function getCurrentEmailContent() {
+  if (!isGmailPage()) return null;
+
+  // Get email content from Gmail's DOM
+  const emailContent = document.querySelector('.a3s.aiL');
+  if (!emailContent) return null;
+
+  return {
+    subject: document.querySelector('h2.hP')?.textContent || '',
+    sender: document.querySelector('.gD')?.getAttribute('email') || '',
+    content: emailContent.textContent || '',
+    links: Array.from(emailContent.getElementsByTagName('a')).map(a => a.href)
+  };
+}
+
+// Function to analyze email content
+async function analyzeEmailContent(emailData) {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'ANALYZE_EMAIL',
+      data: emailData
+    });
+
+    if (response && response.success) {
+      return response.data;
+    }
+    throw new Error('Failed to analyze email');
+  } catch (error) {
+    console.error('Error analyzing email:', error);
+    return null;
+  }
+}
+
+// Function to create email security badge
+function createEmailSecurityBadge(riskScore, analysis) {
+  // Remove existing badge if any
+  const existingBadge = document.querySelector('.securiguard-email-badge');
+  if (existingBadge) {
+    existingBadge.remove();
+  }
+
+  // Create badge container
+  const badgeContainer = document.createElement('div');
+  badgeContainer.className = 'securiguard-email-badge';
+  badgeContainer.style.cssText = `
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    padding: 10px 15px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    z-index: 10000;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  `;
+
+  // Set badge color based on risk score
+  if (riskScore > 70) {
+    badgeContainer.style.backgroundColor = '#ff4444';
+    badgeContainer.style.color = 'white';
+    badgeContainer.textContent = '⚠️ High Risk Email';
+  } else if (riskScore > 30) {
+    badgeContainer.style.backgroundColor = '#ffbb33';
+    badgeContainer.style.color = 'black';
+    badgeContainer.textContent = '⚠️ Suspicious Email';
+  } else {
+    badgeContainer.style.backgroundColor = '#00C851';
+    badgeContainer.style.color = 'white';
+    badgeContainer.textContent = '✓ Safe Email';
+  }
+
+  // Add click handler for tooltip
+  badgeContainer.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    showEmailSecurityTooltip(riskScore, analysis);
+  });
+
+  // Add badge to document
+  document.body.appendChild(badgeContainer);
+}
+
+// Function to show email security tooltip
+function showEmailSecurityTooltip(riskScore, analysis) {
+  // Remove existing tooltip if any
+  const existingTooltip = document.querySelector('.securiguard-email-tooltip');
+  if (existingTooltip) {
+    existingTooltip.remove();
+  }
+
+  // Create tooltip container
+  const tooltipContainer = document.createElement('div');
+  tooltipContainer.className = 'securiguard-email-tooltip';
+  tooltipContainer.style.cssText = `
+    position: fixed;
+    top: 60px;
+    right: 20px;
+    background: white;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 15px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    z-index: 10000;
+    max-width: 300px;
+    font-size: 14px;
+  `;
+
+  // Add tooltip content
+  tooltipContainer.innerHTML = `
+    <div style="margin-bottom: 10px;">
+      <strong>Email Security Analysis</strong>
+      <span style="float: right; cursor: pointer;" class="close-tooltip">×</span>
+    </div>
+    <div style="margin-bottom: 8px;">
+      <strong>Risk Score:</strong> ${riskScore}/100
+    </div>
+    <div style="margin-bottom: 8px;">
+      <strong>Analysis:</strong><br>
+      ${analysis.warnings.join('<br>')}
+    </div>
+    <div style="margin-bottom: 8px;">
+      <strong>Recommendations:</strong><br>
+      ${analysis.recommendations.join('<br>')}
+    </div>
+  `;
+
+  // Add close button handler
+  tooltipContainer.querySelector('.close-tooltip').addEventListener('click', () => {
+    tooltipContainer.remove();
+  });
+
+  // Add tooltip to document
+  document.body.appendChild(tooltipContainer);
+
+  // Close tooltip when clicking outside
+  document.addEventListener('click', function closeTooltip(e) {
+    if (!tooltipContainer.contains(e.target) && !e.target.classList.contains('securiguard-email-badge')) {
+      tooltipContainer.remove();
+      document.removeEventListener('click', closeTooltip);
+    }
+  });
+}
+
+// Monitor Gmail for email changes
+if (isGmailPage()) {
+  // Initial email check
+  const checkEmail = async () => {
+    const emailData = getCurrentEmailContent();
+    if (emailData) {
+      const analysis = await analyzeEmailContent(emailData);
+      if (analysis) {
+        createEmailSecurityBadge(analysis.riskScore, analysis);
+        // Store email analysis
+        chrome.storage.local.get(['scannedEmails'], (result) => {
+          const storedEmails = result.scannedEmails || {};
+          storedEmails[emailData.subject] = {
+            ...emailData,
+            analysis,
+            timestamp: new Date().toISOString()
+          };
+          chrome.storage.local.set({ scannedEmails: storedEmails });
+        });
+      }
+    }
+  };
+
+  // Check email when URL changes (new email opened)
+  let lastEmailUrl = window.location.href;
+  new MutationObserver(() => {
+    const currentUrl = window.location.href;
+    if (currentUrl !== lastEmailUrl) {
+      lastEmailUrl = currentUrl;
+      checkEmail();
+    }
+  }).observe(document, { subtree: true, childList: true });
+
+  // Initial check
+  checkEmail();
 } 

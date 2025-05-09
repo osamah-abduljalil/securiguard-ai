@@ -3,86 +3,61 @@ document.addEventListener('DOMContentLoaded', () => {
   const currentRiskElement = document.getElementById('current-risk');
   const threatsBlockedElement = document.getElementById('threats-blocked');
   const lastScanElement = document.getElementById('last-scan');
-  const scanNowButton = document.getElementById('scan-now');
   const urlTableBody = document.getElementById('url-table-body');
   const emailTableBody = document.getElementById('email-table-body');
 
-  // Initialize elements with default values
-  if (currentRiskElement) currentRiskElement.textContent = 'Scanning...';
-  if (threatsBlockedElement) threatsBlockedElement.textContent = '0';
-  if (lastScanElement) lastScanElement.textContent = 'Never';
-
-  // Load stats from storage
-  chrome.storage.local.get(['threatsBlocked', 'lastScan', 'scannedUrls', 'scannedEmails'], (result) => {
+  // Load data from storage
+  chrome.storage.local.get([
+    'threatsBlocked',
+    'lastScan',
+    'scannedUrls',
+    'scannedEmails',
+    'currentRiskScore'
+  ], (result) => {
+    // Update summary cards
     if (result.threatsBlocked && threatsBlockedElement) {
       threatsBlockedElement.textContent = result.threatsBlocked;
     }
+
     if (result.lastScan && lastScanElement) {
       lastScanElement.textContent = new Date(result.lastScan).toLocaleString();
     }
+
+    if (result.currentRiskScore && currentRiskElement) {
+      updateRiskDisplay(result.currentRiskScore);
+    }
+
+    // Update URL table
     if (result.scannedUrls) {
       updateUrlTable(result.scannedUrls);
     }
+
+    // Update email table
     if (result.scannedEmails) {
       updateEmailTable(result.scannedEmails);
     }
   });
-
-  // Get current tab's security status
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (!tabs || !tabs[0]) return;
-    
-    const currentTab = tabs[0];
-    chrome.tabs.sendMessage(currentTab.id, { type: 'GET_SECURITY_STATUS' }, (response) => {
-      if (chrome.runtime.lastError) {
-        console.log('Error getting security status:', chrome.runtime.lastError);
-        if (currentRiskElement) currentRiskElement.textContent = 'Error';
-        return;
-      }
-      
-      if (response && response.riskScore !== null && currentRiskElement) {
-        updateRiskDisplay(response.riskScore);
-      }
-    });
-  });
-
-  // Handle scan now button click
-  if (scanNowButton) {
-    scanNowButton.addEventListener('click', () => {
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs || !tabs[0]) return;
-        
-        const currentTab = tabs[0];
-        chrome.tabs.sendMessage(currentTab.id, { type: 'SCAN_URL', url: currentTab.url }, (response) => {
-          if (chrome.runtime.lastError) {
-            console.log('Error scanning URL:', chrome.runtime.lastError);
-            return;
-          }
-        });
-      });
-    });
-  }
 
   // Update risk display
   function updateRiskDisplay(riskScore) {
     if (!currentRiskElement) return;
     
     let riskText;
-    let riskColor;
+    let riskClass;
 
     if (riskScore <= 30) {
       riskText = 'Safe';
-      riskColor = '#4CAF50';
+      riskClass = 'safe';
     } else if (riskScore <= 70) {
       riskText = 'Caution';
-      riskColor = '#FFC107';
+      riskClass = 'caution';
     } else {
       riskText = 'Danger';
-      riskColor = '#F44336';
+      riskClass = 'danger';
     }
 
     currentRiskElement.textContent = `${riskText} (${riskScore}/100)`;
-    currentRiskElement.style.color = riskColor;
+    currentRiskElement.className = `summary-value ${riskClass}`;
   }
 
   // Update URL table
@@ -95,7 +70,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!scannedUrls || Object.keys(scannedUrls).length === 0) {
       urlTableBody.innerHTML = `
         <tr>
-          <td colspan="3" class="no-urls">No URLs scanned yet</td>
+          <td colspan="4" class="no-data">No URLs scanned yet</td>
         </tr>
       `;
       return;
@@ -132,11 +107,16 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       statusCell.appendChild(statusBadge);
+
+      // Create timestamp cell
+      const timestampCell = document.createElement('td');
+      timestampCell.textContent = new Date(data.timestamp).toLocaleString();
       
       // Add cells to row
       row.appendChild(urlCell);
       row.appendChild(scoreCell);
       row.appendChild(statusCell);
+      row.appendChild(timestampCell);
       
       // Add row to table
       urlTableBody.appendChild(row);
@@ -153,7 +133,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!scannedEmails || Object.keys(scannedEmails).length === 0) {
       emailTableBody.innerHTML = `
         <tr>
-          <td colspan="4" class="no-emails">No emails scanned yet</td>
+          <td colspan="5" class="no-data">No emails scanned yet</td>
         </tr>
       `;
       return;
@@ -196,51 +176,20 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       statusCell.appendChild(statusBadge);
+
+      // Create timestamp cell
+      const timestampCell = document.createElement('td');
+      timestampCell.textContent = new Date(data.timestamp).toLocaleString();
       
       // Add cells to row
       row.appendChild(subjectCell);
       row.appendChild(senderCell);
       row.appendChild(scoreCell);
       row.appendChild(statusCell);
+      row.appendChild(timestampCell);
       
       // Add row to table
       emailTableBody.appendChild(row);
     });
   }
-
-  // Listen for security status updates
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'SECURITY_STATUS_UPDATE') {
-      updateRiskDisplay(message.data.riskScore);
-      
-      // Update last scan time
-      if (lastScanElement) {
-        lastScanElement.textContent = new Date().toLocaleString();
-      }
-      chrome.storage.local.set({ lastScan: new Date().toISOString() });
-
-      // Update threats blocked if a threat was detected
-      if (message.data.riskScore > 70 && threatsBlockedElement) {
-        chrome.storage.local.get(['threatsBlocked'], (result) => {
-          const newCount = (result.threatsBlocked || 0) + 1;
-          threatsBlockedElement.textContent = newCount;
-          chrome.storage.local.set({ threatsBlocked: newCount });
-        });
-      }
-
-      // Update URL table
-      chrome.storage.local.get(['scannedUrls'], (result) => {
-        if (result.scannedUrls) {
-          updateUrlTable(result.scannedUrls);
-        }
-      });
-
-      // Update email table
-      chrome.storage.local.get(['scannedEmails'], (result) => {
-        if (result.scannedEmails) {
-          updateEmailTable(result.scannedEmails);
-        }
-      });
-    }
-  });
-});
+}); 

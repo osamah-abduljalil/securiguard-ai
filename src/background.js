@@ -87,68 +87,218 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   }
 });
 
-// Handle messages from content script
+// Function to analyze email content
+async function analyzeEmail(emailData) {
+  try {
+    const { subject, sender, content, links } = emailData;
+    const warnings = [];
+    const recommendations = [];
+    let riskScore = 0;
+
+    // Check sender domain
+    const senderDomain = sender.split('@')[1];
+    if (!senderDomain) {
+      warnings.push('Invalid sender email address');
+      riskScore += 20;
+    }
+
+    // Check for suspicious patterns in subject
+    const suspiciousPatterns = [
+      'urgent',
+      'action required',
+      'verify your account',
+      'suspicious activity',
+      'unusual login',
+      'account suspended',
+      'password expired',
+      'security alert',
+      'verify your identity',
+      'confirm your details'
+    ];
+
+    const subjectLower = subject.toLowerCase();
+    suspiciousPatterns.forEach(pattern => {
+      if (subjectLower.includes(pattern)) {
+        warnings.push(`Suspicious pattern in subject: "${pattern}"`);
+        riskScore += 10;
+      }
+    });
+
+    // Check for suspicious links
+    if (links && links.length > 0) {
+      const suspiciousDomains = [
+        'bit.ly',
+        'tinyurl.com',
+        'goo.gl',
+        't.co',
+        'is.gd',
+        'cli.gs',
+        'ow.ly',
+        'yfrog.com',
+        'migre.me',
+        'ff.im',
+        'tiny.cc',
+        'url4.eu',
+        'tr.im',
+        'twit.ac',
+        'su.pr',
+        'twurl.nl',
+        'snipurl.com',
+        'short.to',
+        'BudURL.com',
+        'ping.fm',
+        'post.ly',
+        'Just.as',
+        'bkite.com',
+        'snipr.com',
+        'fic.kr',
+        'loopt.us',
+        'htxt.it',
+        'AltURL.com',
+        'RedirX.com',
+        'DigBig.com',
+        'short.ie',
+        'u.mavrev.com',
+        'kl.am',
+        'wp.me',
+        'u.nu',
+        'rubyurl.com',
+        'om.ly',
+        'to.ly',
+        'bit.do',
+        't.co',
+        'lnkd.in',
+        'db.tt',
+        'qr.ae',
+        'adf.ly',
+        'goo.gl',
+        'bitly.com',
+        'cur.lv',
+        'tinyurl.com',
+        'ow.ly',
+        'bit.ly',
+        'adcrun.ch',
+        'ity.im',
+        'q.gs',
+        'is.gd',
+        'po.st',
+        'bc.vc',
+        'twitthis.com',
+        'ht.ly',
+        'alturl.com',
+        'u.to',
+        'j.mp',
+        'buzurl.com',
+        'cutt.us',
+        'u.bb',
+        'yourls.org',
+        'x.co',
+        'prettylinkpro.com',
+        'scrnch.me',
+        'filoops.info',
+        'vzturl.com',
+        'qr.net',
+        '1url.com',
+        'tweez.me',
+        'v.gd',
+        'tr.im',
+        'link.zip.net'
+      ];
+
+      links.forEach(link => {
+        try {
+          const url = new URL(link);
+          if (suspiciousDomains.includes(url.hostname)) {
+            warnings.push(`Suspicious URL shortener detected: ${url.hostname}`);
+            riskScore += 15;
+          }
+        } catch (e) {
+          warnings.push(`Invalid URL detected: ${link}`);
+          riskScore += 20;
+        }
+      });
+    }
+
+    // Check for common phishing indicators in content
+    const phishingIndicators = [
+      'click here',
+      'verify now',
+      'confirm your account',
+      'update your information',
+      'your account will be suspended',
+      'unusual activity detected',
+      'security check required',
+      'verify your identity',
+      'confirm your details',
+      'your account has been compromised'
+    ];
+
+    const contentLower = content.toLowerCase();
+    phishingIndicators.forEach(indicator => {
+      if (contentLower.includes(indicator)) {
+        warnings.push(`Phishing indicator found: "${indicator}"`);
+        riskScore += 10;
+      }
+    });
+
+    // Add recommendations based on warnings
+    if (warnings.length > 0) {
+      recommendations.push('Be cautious with this email');
+      recommendations.push('Verify the sender\'s identity');
+      recommendations.push('Do not click on any links without verification');
+      recommendations.push('Do not provide any personal information');
+    } else {
+      recommendations.push('Email appears to be safe');
+      recommendations.push('Continue to exercise caution with links');
+    }
+
+    // Cap risk score at 100
+    riskScore = Math.min(riskScore, 100);
+
+    return {
+      riskScore,
+      warnings,
+      recommendations
+    };
+  } catch (error) {
+    console.error('Error analyzing email:', error);
+    return {
+      riskScore: 100,
+      warnings: ['Error analyzing email'],
+      recommendations: ['Treat this email with caution']
+    };
+  }
+}
+
+// Listen for messages from content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'SCAN_URL') {
-    // Extract and validate URL
-    const url = typeof message.url === 'string' ? message.url : 
-                (message.url?.href || message.url?.url || null);
-
-    if (!url) {
-      console.error('Invalid URL provided:', message.url);
-      sendResponse({ 
-        success: false, 
-        error: 'Invalid URL provided for scanning' 
+    analyzeUrl(message.url)
+      .then(analysis => {
+        sendResponse({ success: true, data: analysis });
+      })
+      .catch(error => {
+        console.error('Error scanning URL:', error);
+        sendResponse({ success: false, error: error.message });
       });
-      return;
-    }
-
-    try {
-      analyzeUrl(url)
-        .then(async (urlAnalysis) => {
-          try {
-            const threatIntel = await checkThreatIntelligence(url);
-            const riskScore = calculateRiskScore(urlAnalysis, threatIntel);
-            
-            sendResponse({
-              success: true,
-              data: {
-                url,
-                riskScore,
-                urlAnalysis,
-                threatIntel,
-                timestamp: new Date().toISOString()
-              }
-            });
-          } catch (error) {
-            console.error('Error in threat intelligence check:', error);
-            sendResponse({
-              success: false,
-              error: error?.message || error?.toString() || 'Failed to check threat intelligence'
-            });
-          }
-        })
-        .catch(error => {
-          console.error('Error in URL analysis:', error);
-          sendResponse({
-            success: false,
-            error: error?.message || error?.toString() || 'Failed to analyze URL'
-          });
-        });
-      return true; // Required for async sendResponse
-    } catch (error) {
-      console.error('Error processing URL scan request:', error);
-      sendResponse({
-        success: false,
-        error: error?.message || error?.toString() || 'Failed to process URL scan request'
-      });
-    }
-  }
-  if (message.type === 'ANALYZE_EMAIL') {
+    return true; // Keep the message channel open for async response
+  } else if (message.type === 'ANALYZE_EMAIL') {
     analyzeEmail(message.data)
-      .then(results => sendResponse({ success: true, data: results }))
-      .catch(error => sendResponse({ success: false, error: error.message }));
-    return true; // Required for async sendResponse
+      .then(analysis => {
+        sendResponse({ success: true, data: analysis });
+      })
+      .catch(error => {
+        console.error('Error analyzing email:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep the message channel open for async response
+  } else if (message.type === 'SHOW_SECURITY_REPORT') {
+    chrome.windows.create({
+      url: chrome.runtime.getURL('report.html'),
+      type: 'popup',
+      width: 800,
+      height: 600
+    });
   }
 });
 
