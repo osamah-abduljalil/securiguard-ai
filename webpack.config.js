@@ -1,4 +1,5 @@
 const path = require('path');
+const CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = {
   mode: 'production',
@@ -32,6 +33,19 @@ module.exports = {
   resolve: {
     extensions: ['.js', '.jsx']
   },
+  plugins: [
+    new CopyPlugin({
+      patterns: [
+        { from: 'src/popup.html', to: 'popup.html' },
+        { from: 'src/content.css', to: 'content.css' },
+        { 
+          from: 'assets',
+          to: 'assets',
+          noErrorOnMissing: true
+        }
+      ]
+    })
+  ],
   optimization: {
     minimize: true
   }

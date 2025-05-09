@@ -1,11 +1,24 @@
-import { analyzeUrl } from './services/urlAnalyzer';
-import { checkThreatIntelligence } from './services/threatIntelligence';
-import { analyzeEmail } from './services/emailAnalyzer';
-import { scanFile } from './services/fileScanner';
+// Import service files
+importScripts(
+  'services/urlAnalyzer.js',
+  'services/threatIntelligence.js',
+  'services/emailAnalyzer.js',
+  'services/fileScanner.js'
+);
 
-// Initialize extension
+// Initialize service worker
+self.addEventListener('install', (event) => {
+  console.log('Service worker installed');
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  console.log('Service worker activated');
+  event.waitUntil(clients.claim());
+});
+
+// Initialize context menu items
 chrome.runtime.onInstalled.addListener(() => {
-  // Create context menu items
   chrome.contextMenus.create({
     id: 'scanUrl',
     title: 'Scan URL with SecuriGuard AI',
@@ -20,102 +33,147 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // Handle context menu clicks
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'scanUrl') {
-    handleUrlScan(info.linkUrl, tab.id);
+    try {
+      const url = info.linkUrl;
+      const urlAnalysis = await analyzeUrl(url);
+      const threatIntel = await checkThreatIntelligence(url);
+      
+      // Calculate final risk score
+      const riskScore = calculateRiskScore(urlAnalysis, threatIntel);
+      
+      // Send results back to content script
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'SCAN_RESULTS',
+        data: {
+          url,
+          riskScore,
+          urlAnalysis,
+          threatIntel,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      console.error('Error scanning URL:', error);
+      const errorMessage = error?.message || error?.toString() || 'Failed to scan URL';
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'SCAN_ERROR',
+        error: errorMessage
+      });
+    }
   } else if (info.menuItemId === 'scanFile') {
-    handleFileScan(info.linkUrl, tab.id);
+    try {
+      const fileUrl = info.linkUrl;
+      const file = await fetch(fileUrl).then(r => r.blob());
+      const fileAnalysis = await scanFile(file);
+      
+      // Send results back to content script
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'SCAN_RESULTS',
+        data: {
+          fileUrl,
+          fileAnalysis,
+          timestamp: new Date().toISOString()
+        }
+      });
+    } catch (error) {
+      console.error('Error scanning file:', error);
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'SCAN_ERROR',
+        error: error.message
+      });
+    }
   }
 });
 
-// Handle URL scanning
-async function handleUrlScan(url, tabId) {
-  try {
-    // Get AI analysis
-    const aiAnalysis = await analyzeUrl(url);
-    
-    // Get threat intelligence
-    const threatData = await checkThreatIntelligence(url);
-    
-    // Calculate risk score
-    const riskScore = calculateRiskScore(aiAnalysis, threatData);
-    
-    // Send results to content script
-    chrome.tabs.sendMessage(tabId, {
-      type: 'SCAN_RESULTS',
-      data: {
-        url,
-        riskScore,
-        aiAnalysis,
-        threatData,
-        timestamp: new Date().toISOString()
-      }
-    });
-  } catch (error) {
-    console.error('Error scanning URL:', error);
-    chrome.tabs.sendMessage(tabId, {
-      type: 'SCAN_ERROR',
-      error: error.message
-    });
-  }
-}
-
-// Handle file scanning
-async function handleFileScan(fileUrl, tabId) {
-  try {
-    const scanResults = await scanFile(fileUrl);
-    chrome.tabs.sendMessage(tabId, {
-      type: 'FILE_SCAN_RESULTS',
-      data: scanResults
-    });
-  } catch (error) {
-    console.error('Error scanning file:', error);
-    chrome.tabs.sendMessage(tabId, {
-      type: 'SCAN_ERROR',
-      error: error.message
-    });
-  }
-}
-
-// Calculate risk score based on multiple factors
-function calculateRiskScore(aiAnalysis, threatData) {
-  let score = 0;
-  
-  // AI analysis weight: 40%
-  score += aiAnalysis.riskScore * 0.4;
-  
-  // Threat intelligence weight: 40%
-  score += threatData.riskScore * 0.4;
-  
-  // Additional factors weight: 20%
-  const additionalFactors = {
-    domainAge: threatData.domainAge,
-    sslValid: threatData.sslValid,
-    reputation: threatData.reputation
-  };
-  
-  score += calculateAdditionalScore(additionalFactors) * 0.2;
-  
-  return Math.min(Math.max(score, 0), 100);
-}
-
-// Calculate score for additional factors
-function calculateAdditionalScore(factors) {
-  let score = 0;
-  
-  if (factors.domainAge > 365) score += 20;
-  if (factors.sslValid) score += 20;
-  if (factors.reputation > 0.7) score += 20;
-  
-  return score;
-}
-
-// Listen for messages from content script
+// Handle messages from content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'SCAN_EMAIL') {
+  if (message.type === 'SCAN_URL') {
+    // Extract and validate URL
+    const url = typeof message.url === 'string' ? message.url : 
+                (message.url?.href || message.url?.url || null);
+
+    if (!url) {
+      console.error('Invalid URL provided:', message.url);
+      sendResponse({ 
+        success: false, 
+        error: 'Invalid URL provided for scanning' 
+      });
+      return;
+    }
+
+    try {
+      analyzeUrl(url)
+        .then(async (urlAnalysis) => {
+          try {
+            const threatIntel = await checkThreatIntelligence(url);
+            const riskScore = calculateRiskScore(urlAnalysis, threatIntel);
+            
+            sendResponse({
+              success: true,
+              data: {
+                url,
+                riskScore,
+                urlAnalysis,
+                threatIntel,
+                timestamp: new Date().toISOString()
+              }
+            });
+          } catch (error) {
+            console.error('Error in threat intelligence check:', error);
+            sendResponse({
+              success: false,
+              error: error?.message || error?.toString() || 'Failed to check threat intelligence'
+            });
+          }
+        })
+        .catch(error => {
+          console.error('Error in URL analysis:', error);
+          sendResponse({
+            success: false,
+            error: error?.message || error?.toString() || 'Failed to analyze URL'
+          });
+        });
+      return true; // Required for async sendResponse
+    } catch (error) {
+      console.error('Error processing URL scan request:', error);
+      sendResponse({
+        success: false,
+        error: error?.message || error?.toString() || 'Failed to process URL scan request'
+      });
+    }
+  }
+  if (message.type === 'ANALYZE_EMAIL') {
     analyzeEmail(message.data)
       .then(results => sendResponse({ success: true, data: results }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true; // Required for async sendResponse
   }
-}); 
+});
+
+// Calculate risk score based on URL analysis and threat intelligence
+function calculateRiskScore(urlAnalysis, threatIntel) {
+  try {
+    let score = urlAnalysis?.riskScore || 50; // Default to middle risk if no score provided
+    
+    // Adjust score based on threat intelligence
+    if (threatIntel?.isKnownMalicious?.isMalicious) {
+      score -= 50;
+    }
+    
+    if (threatIntel?.domainInfo?.suspicious) {
+      score -= 20;
+    }
+    
+    if (threatIntel?.phishingIndicators?.hasPhishingIndicators) {
+      score -= (threatIntel.phishingIndicators.indicators?.length || 0) * 10;
+    }
+    
+    // Normalize score between 0 and 100
+    return Math.min(Math.max(score, 0), 100);
+  } catch (error) {
+    console.error('Error calculating risk score:', error);
+    return 50; // Return middle risk score on error
+  }
+} 

@@ -1,35 +1,146 @@
-import { Configuration, OpenAIApi } from 'openai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { extractFeatures } from '../utils/urlFeatures';
 
-// Initialize OpenAI configuration
-const configuration = new Configuration({
-  apiKey: process.env.OPENAI_API_KEY
-});
-const openai = new OpenAIApi(configuration);
+// Initialize Gemini configuration
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-export async function analyzeUrl(url) {
+// URL Analyzer Service
+async function analyzeUrl(url) {
   try {
     // Extract URL features
-    const features = extractFeatures(url);
+    const features = extractUrlFeatures(url);
     
-    // Prepare prompt for AI analysis
-    const prompt = generateAnalysisPrompt(url, features);
+    // Analyze URL structure
+    const structureAnalysis = analyzeUrlStructure(features);
     
     // Get AI analysis
-    const aiResponse = await getAIAnalysis(prompt);
+    const aiAnalysis = await getAIAnalysis(url, features);
     
-    // Process and return results
+    // Calculate initial risk score
+    const riskScore = calculateInitialRiskScore(structureAnalysis, aiAnalysis);
+    
     return {
-      riskScore: calculateRiskScore(aiResponse, features),
-      analysis: aiResponse,
+      riskScore,
       features,
+      structureAnalysis,
+      aiAnalysis,
       timestamp: new Date().toISOString()
     };
   } catch (error) {
     console.error('Error analyzing URL:', error);
-    throw new Error('Failed to analyze URL');
+    throw error;
   }
 }
+
+function extractUrlFeatures(url) {
+  try {
+    const urlObj = new URL(url);
+    return {
+      protocol: urlObj.protocol,
+      hostname: urlObj.hostname,
+      pathname: urlObj.pathname,
+      search: urlObj.search,
+      hash: urlObj.hash,
+      hasSubdomain: urlObj.hostname.split('.').length > 2,
+      isHttps: urlObj.protocol === 'https:',
+      pathLength: urlObj.pathname.split('/').filter(Boolean).length,
+      hasQueryParams: urlObj.search.length > 0,
+      hasSpecialChars: /[<>{}[\]\\^~`@#$%&*()_+=|'";:,?]/.test(url)
+    };
+  } catch (error) {
+    console.error('Error extracting URL features:', error);
+    throw error;
+  }
+}
+
+function analyzeUrlStructure(features) {
+  const analysis = {
+    suspicious: false,
+    warnings: [],
+    score: 0
+  };
+
+  // Check for suspicious patterns
+  if (!features.isHttps) {
+    analysis.warnings.push('Not using HTTPS');
+    analysis.score -= 20;
+  }
+
+  if (features.hasSpecialChars) {
+    analysis.warnings.push('Contains special characters');
+    analysis.score -= 15;
+  }
+
+  if (features.pathLength > 5) {
+    analysis.warnings.push('Unusually long path');
+    analysis.score -= 10;
+  }
+
+  if (features.hasQueryParams) {
+    analysis.warnings.push('Contains query parameters');
+    analysis.score -= 5;
+  }
+
+  analysis.suspicious = analysis.score < -20;
+  return analysis;
+}
+
+async function getAIAnalysis(url, features) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    
+    const prompt = `Analyze this URL for potential security risks:
+URL: ${url}
+Features:
+- Protocol: ${features.protocol}
+- Hostname: ${features.hostname}
+- Path length: ${features.pathLength}
+- Has query params: ${features.hasQueryParams}
+- Has special chars: ${features.hasSpecialChars}
+- Has subdomain: ${features.hasSubdomain}
+- Is HTTPS: ${features.isHttps}
+
+Please analyze for:
+1. Phishing patterns
+2. Suspicious domain names
+3. URL obfuscation
+4. Social engineering attempts
+5. Overall risk assessment
+
+Provide a detailed analysis and risk score (0-100).`;
+
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    return response.text();
+  } catch (error) {
+    console.error('Error getting AI analysis:', error);
+    throw new Error('Failed to get AI analysis');
+  }
+}
+
+function calculateInitialRiskScore(structureAnalysis, aiAnalysis) {
+  // Base score of 50
+  let score = 50;
+  
+  // Adjust based on structure analysis
+  score += structureAnalysis.score;
+  
+  // Extract score from AI analysis
+  const aiScore = extractAIScore(aiAnalysis);
+  score = (score + aiScore) / 2;
+  
+  // Normalize score between 0 and 100
+  return Math.min(Math.max(score, 0), 100);
+}
+
+function extractAIScore(aiAnalysis) {
+  // Extract numerical score from AI analysis
+  const scoreMatch = aiAnalysis.match(/risk score:?\s*(\d+)/i);
+  return scoreMatch ? parseInt(scoreMatch[1]) : 50;
+}
+
+// Export functions
+self.analyzeUrl = analyzeUrl;
 
 function generateAnalysisPrompt(url, features) {
   return `Analyze this URL for potential security risks:
@@ -53,22 +164,6 @@ Please analyze for:
 Provide a detailed analysis and risk score (0-100).`;
 }
 
-async function getAIAnalysis(prompt) {
-  try {
-    const response = await openai.createCompletion({
-      model: "gpt-4",
-      prompt: prompt,
-      max_tokens: 500,
-      temperature: 0.3
-    });
-
-    return response.data.choices[0].text.trim();
-  } catch (error) {
-    console.error('Error getting AI analysis:', error);
-    throw new Error('Failed to get AI analysis');
-  }
-}
-
 function calculateRiskScore(aiAnalysis, features) {
   let score = 0;
   
@@ -83,10 +178,4 @@ function calculateRiskScore(aiAnalysis, features) {
   score = (score + aiScore) / 2;
   
   return Math.min(Math.max(score, 0), 100);
-}
-
-function extractAIScore(aiAnalysis) {
-  // Extract numerical score from AI analysis
-  const scoreMatch = aiAnalysis.match(/risk score:?\s*(\d+)/i);
-  return scoreMatch ? parseInt(scoreMatch[1]) : 50;
 } 
