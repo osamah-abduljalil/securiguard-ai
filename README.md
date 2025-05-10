@@ -67,7 +67,7 @@ A powerful Chrome extension that uses AI to detect and protect against malicious
 
 ### Prerequisites
 - Node.js (v18 or higher)
-- npm (v8 or higher)
+- npm (v8 or higher) OR yarn
 - Chrome browser
 
 ### Available Scripts
