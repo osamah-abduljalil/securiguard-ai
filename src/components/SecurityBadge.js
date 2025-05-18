@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './SecurityBadge.css';
 
+
 const SecurityBadge = ({ riskScore, error }) => {
   const [position, setPosition] = useState({ x: 20, y: 20 });
   const [isDragging, setIsDragging] = useState(false);
