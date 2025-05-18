@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>URL Scanner</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>URL Scanner</h1>
+            <p class="subtitle">Scan URLs for potential threats and security issues</p>
+        </header>
+
+        <main>
+            <div class="scan-container">
+                <div class="input-group">
+                    <input type="url" id="urlInput" placeholder="Enter URL to scan (e.g., https://example.com)" required>
+                    <button id="scanButton">Scan URL</button>
+                </div>
+            </div>
+
+            <div class="results-container" id="resultsContainer" style="display: none;">
+                <div class="scan-status">
+                    <h2>Scan Results</h2>
+                    <div class="status-indicator">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Scanning...</span>
+                    </div>
+                </div>
+
+                <div class="results-grid">
+                    <div class="result-card">
+                        <h3>URL Information</h3>
+                        <div id="urlInfo" class="result-content">
+                            <p>Domain: <span id="domain">-</span></p>
+                            <p>Protocol: <span id="protocol">-</span></p>
+                            <p>Path: <span id="path">-</span></p>
+                        </div>
+                    </div>
+
+                    <div class="result-card">
+                        <h3>Security Analysis</h3>
+                        <div id="securityInfo" class="result-content">
+                            <div class="security-item">
+                                <p>SSL Status: <span id="sslStatus">-</span></p>
+                                <p class="description" id="sslDescription"></p>
+                            </div>
+                            <div class="security-item">
+                                <p>Malware Check: <span id="malwareStatus">-</span></p>
+                                <p class="description" id="malwareDescription"></p>
+                            </div>
+                            <div class="security-item">
+                                <p>Phishing Check: <span id="phishingStatus">-</span></p>
+                                <p class="description" id="phishingDescription"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="result-card">
+                        <h3>Reputation</h3>
+                        <div id="reputationInfo" class="result-content">
+                            <div class="reputation-item">
+                                <p>Domain Age: <span id="domainAge">-</span></p>
+                                <p class="description" id="domainAgeDescription"></p>
+                            </div>
+                            <div class="reputation-item">
+                                <p>Reputation Score: <span id="reputationScore">-</span></p>
+                                <p class="description" id="reputationScoreDescription"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Powered by URL Scanner | <a href="#" id="aboutLink">About</a></p>
+        </footer>
+    </div>
+
+    <div id="aboutModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2>About URL Scanner</h2>
+            <p>This tool helps you analyze URLs for potential security threats and provides detailed information about the website's security status.</p>
+            <p>Features:</p>
+            <ul>
+                <li>URL validation and analysis</li>
+                <li>SSL certificate checking</li>
+                <li>Malware detection</li>
+                <li>Phishing detection</li>
+                <li>Domain reputation analysis</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html> 
